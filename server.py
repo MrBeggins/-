@@ -857,24 +857,26 @@ def _calculate_auction_price(bids, asks):
     # cumulative_bid[price] = сколько лотов готовы купить по цене >= price
     # cumulative_ask[price] = сколько лотов готовы продать по цене <= price
     
+    # Словари объёмов по цене — O(n), без float-сравнений в цикле
+    bid_by_price = {}
+    for bid_price, bid_qty in parsed_bids:
+        bid_by_price[bid_price] = bid_by_price.get(bid_price, 0) + bid_qty
+    ask_by_price = {}
+    for ask_price, ask_qty in parsed_asks:
+        ask_by_price[ask_price] = ask_by_price.get(ask_price, 0) + ask_qty
+
     # Кумулятивный bid: идём от высокой цены к низкой, накапливаем
     cumulative_bid = {}
     running_bid = 0
     for price in reversed(all_prices):
-        # Добавляем объём заявок на покупку по этой цене
-        for bid_price, bid_qty in parsed_bids:
-            if bid_price == price:
-                running_bid += bid_qty
+        running_bid += bid_by_price.get(price, 0)
         cumulative_bid[price] = running_bid
-    
+
     # Кумулятивный ask: идём от низкой цены к высокой, накапливаем
     cumulative_ask = {}
     running_ask = 0
     for price in all_prices:
-        # Добавляем объём заявок на продажу по этой цене
-        for ask_price, ask_qty in parsed_asks:
-            if ask_price == price:
-                running_ask += ask_qty
+        running_ask += ask_by_price.get(price, 0)
         cumulative_ask[price] = running_ask
     
     # Ищем точку пересечения: цену, где cumulative_bid и cumulative_ask ближе всего
