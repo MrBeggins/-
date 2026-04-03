@@ -862,8 +862,8 @@ def _is_auction_time(instrument_type=None):
     """Проверить, сейчас ли время аукциона (по московскому времени).
     
     Расписание аукционов:
-    - Акции (shares): 6:50-7:00 (открытие)
-    - Фьючерсы (futures): 8:50-9:00 (открытие)
+    - Акции (shares): 6:50-7:00 (открытие, только будни)
+    - Фьючерсы (futures): 8:50-9:00 (открытие, будни), 9:50-10:00 (открытие, выходные)
     
     Args:
         instrument_type: 'shares', 'futures' или None (проверяет все аукционы)
@@ -871,26 +871,32 @@ def _is_auction_time(instrument_type=None):
     now_utc = datetime.now(timezone.utc)
     moscow_offset = timedelta(hours=3)
     now_msk = now_utc + moscow_offset
-    
+
     time_minutes = now_msk.hour * 60 + now_msk.minute
-    
-    # Аукционы для акций (shares)
+    is_weekend = now_msk.weekday() >= 5  # 5=суббота, 6=воскресенье
+
+    # Аукционы для акций (shares) — только будни
     shares_auctions = [
         {"start": 6 * 60 + 50, "end": 7 * 60, "type": "opening", "name": "Акции: открытие"},
     ]
-    
+
     # Аукционы для фьючерсов (futures)
-    futures_auctions = [
-        {"start": 8 * 60 + 50, "end": 9 * 60, "type": "opening", "name": "Фьючерсы: открытие"},
-    ]
-    
+    if is_weekend:
+        futures_auctions = [
+            {"start": 9 * 60 + 50, "end": 10 * 60, "type": "opening", "name": "Фьючерсы: открытие (выходной)"},
+        ]
+    else:
+        futures_auctions = [
+            {"start": 8 * 60 + 50, "end": 9 * 60, "type": "opening", "name": "Фьючерсы: открытие"},
+        ]
+
     def check_auctions(auctions):
         for auction in auctions:
             if auction["start"] <= time_minutes < auction["end"]:
                 return auction
         return None
-    
-    active_shares = check_auctions(shares_auctions)
+
+    active_shares = check_auctions(shares_auctions if not is_weekend else [])
     active_futures = check_auctions(futures_auctions)
     
     # Определяем активный аукцион в зависимости от типа инструмента
