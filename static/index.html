@@ -235,10 +235,11 @@
           <th class="num" data-sort="deviation">Откл. % <span class="sort-icon"></span></th>
           <th class="num" data-sort="lots">Лоты <span class="sort-icon"></span></th>
           <th class="num" data-sort="imbalance">Дисбаланс <span class="sort-icon"></span></th>
+          <th class="num">Спотовое изменение</th>
         </tr>
       </thead>
       <tbody id="tableBody">
-        <tr><td colspan="8">Загрузка…</td></tr>
+        <tr><td colspan="9">Загрузка…</td></tr>
       </tbody>
     </table>
   </div>
@@ -274,6 +275,25 @@
     let sortColumn = 'name';
     let sortDirection = 'asc';
     let auctionInfo = null;
+    let spotData = {};  // {yf_ticker: {current_price, ref_price_2345, change_pct}}
+
+    // Маппинг префикса фьючерса → Yahoo Finance тикер
+    const SPOT_PREFIX_MAP = {
+      'GOLD': 'GC=F', 'GOLDM': 'GC=F',
+      'SILV': 'SI=F', 'SILVM': 'SI=F',
+      'BR':   'BZ=F', 'BRM':   'BZ=F',
+      'BTC':  'BTC-USD',
+      'ETH':  'ETH-USD',
+      'NASD': 'NQ=F',
+    };
+
+    function getSpotChangePct(futuresTicker) {
+      if (!futuresTicker) return null;
+      const prefix = futuresTicker.split('-')[0];
+      const yfTicker = SPOT_PREFIX_MAP[prefix];
+      if (!yfTicker) return null;
+      return spotData[yfTicker]?.change_pct ?? null;
+    }
     
     // Показываем название профиля
     if (CURRENT_PROFILE !== 'default') {
@@ -763,7 +783,7 @@
     function renderTable(rows) {
       const tbody = document.getElementById('tableBody');
       if (!rows || rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8">Выберите инструменты в настройках или данных пока нет.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9">Выберите инструменты в настройках или данных пока нет.</td></tr>';
         return;
       }
       const sorted = sortRows(rows);
@@ -834,7 +854,17 @@
         } else if (row.imbalance === 0) {
           imbalance = '0';
         }
-        
+
+        // Спотовое изменение с 23:45 МСК
+        const instrTicker = instrObj ? (instrObj.ticker || '') : '';
+        const spotChg = getSpotChangePct(instrTicker);
+        let spotPct = '—';
+        let spotClass = 'pct-null';
+        if (spotChg != null) {
+          spotPct = (spotChg > 0 ? '+' : '') + spotChg + '%';
+          spotClass = spotChg > 0 ? 'pct-positive' : spotChg < 0 ? 'pct-negative' : 'pct-null';
+        }
+
         return (
           '<tr>' +
           '<td>' + escapeHtml(name) + '</td>' +
@@ -845,6 +875,7 @@
           '<td class="num ' + devClass + '">' + devPct + (deviation != null ? '%' : '') + '</td>' +
           '<td class="num">' + executedLots + '</td>' +
           '<td class="num ' + imbalanceClass + '">' + imbalance + '</td>' +
+          '<td class="num ' + spotClass + '">' + spotPct + '</td>' +
           '</tr>'
         );
       }).join('');
@@ -886,6 +917,16 @@
         currentRows.forEach(row => {
           row.name = namesMap[row.instrument_id] || row.instrument_id;
         });
+
+        // Подгружаем спотовые данные (не блокируем таблицу при ошибке)
+        try {
+          const sr = await fetch('/api/spot');
+          if (sr.ok) {
+            const sd = await sr.json();
+            spotData = sd.spot || {};
+          }
+        } catch (_) {}
+
         renderTable(currentRows);
         updateAuctionBadge();
         updateLastUpdate();

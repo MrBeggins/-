@@ -57,6 +57,27 @@ _stats = {
 }
 _stats_lock = threading.Lock()
 
+# ========== Спотовые цены (Yahoo Finance) ==========
+# Маппинг префикса фьючерса → тикер Yahoo Finance
+SPOT_TICKER_MAP = {
+    'GOLD':  'GC=F',
+    'GOLDM': 'GC=F',
+    'SILV':  'SI=F',
+    'SILVM': 'SI=F',
+    'BR':    'BZ=F',
+    'BRM':   'BZ=F',
+    'BTC':   'BTC-USD',
+    'ETH':   'ETH-USD',
+    'NASD':  'NQ=F',
+}
+SPOT_UPDATE_INTERVAL = 60   # Обновлять споты раз в 60 секунд
+
+# Кэш спотовых цен: {yf_ticker: {current_price, ref_price_2345, change_pct, updated_at}}
+_spot_cache = {}
+_spot_cache_lock = threading.Lock()
+_spot_thread = None
+_spot_running = False
+
 
 def _record_request(endpoint, session_id=None):
     """Записать запрос в статистику."""
@@ -208,6 +229,109 @@ def _load_env_from_file():
 _load_env_from_file()
 
 app = Flask(__name__, static_folder="static", static_url_path="")
+
+
+# ========== Спотовые функции ==========
+
+def _get_futures_prefix(ticker):
+    """Извлечь префикс из тикера фьючерса. Например 'GOLD-6.26' → 'GOLD'."""
+    return ticker.split('-')[0] if '-' in ticker else ticker
+
+
+def _fetch_spot_ref_price_2345(yf_ticker):
+    """Цена закрытия свечи в 23:45 МСК (20:45 UTC) — последняя прошедшая."""
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(yf_ticker)
+        hist = ticker.history(period='2d', interval='5m')
+        if hist.empty:
+            return None
+        # Приводим индекс к UTC
+        hist.index = hist.index.tz_convert('UTC')
+        now_utc = datetime.now(timezone.utc)
+        # Свеча 20:40 UTC закрывается в 20:45 UTC = 23:45 МСК
+        candidates = hist[
+            (hist.index.hour == 20) &
+            (hist.index.minute >= 40) &
+            (hist.index.minute < 45) &
+            (hist.index < now_utc)
+        ]
+        if candidates.empty:
+            return None
+        return float(candidates.iloc[-1]['Close'])
+    except Exception as e:
+        logger.warning("_fetch_spot_ref_price_2345 %s: %s", yf_ticker, e)
+        return None
+
+
+def _update_all_spot_prices():
+    """Обновить текущие спотовые цены и реф. цену 23:45 для всех тикеров."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        logger.warning("yfinance не установлен — спотовые цены недоступны")
+        return
+
+    unique_tickers = list(set(SPOT_TICKER_MAP.values()))
+    now = time.time()
+
+    for yf_ticker in unique_tickers:
+        try:
+            current = yf.Ticker(yf_ticker).fast_info['last_price']
+            if not current:
+                continue
+
+            with _spot_cache_lock:
+                cached = _spot_cache.get(yf_ticker, {})
+                ref = cached.get('ref_price_2345')
+
+            # Обновляем реф. цену раз в 6 часов или если её нет
+            ref_age = now - _spot_cache.get(yf_ticker, {}).get('ref_updated_at', 0)
+            if ref is None or ref_age > 6 * 3600:
+                ref = _fetch_spot_ref_price_2345(yf_ticker)
+
+            change_pct = None
+            if current and ref and ref != 0:
+                change_pct = round((current - ref) / ref * 100, 2)
+
+            with _spot_cache_lock:
+                if yf_ticker not in _spot_cache:
+                    _spot_cache[yf_ticker] = {}
+                _spot_cache[yf_ticker]['current_price'] = current
+                _spot_cache[yf_ticker]['ref_price_2345'] = ref
+                _spot_cache[yf_ticker]['change_pct'] = change_pct
+                _spot_cache[yf_ticker]['updated_at'] = now
+                if ref is not None:
+                    _spot_cache[yf_ticker]['ref_updated_at'] = now
+
+            logger.debug("Spot %s: current=%.4f ref=%.4f chg=%s",
+                         yf_ticker, current, ref or 0, change_pct)
+        except Exception as e:
+            logger.warning("_update_all_spot_prices %s: %s", yf_ticker, e)
+
+
+def _spot_update_loop():
+    """Фоновый поток: обновляет споты каждые 60 секунд."""
+    global _spot_running
+    logger.info("Spot price update thread started")
+    while _spot_running:
+        try:
+            _update_all_spot_prices()
+        except Exception as e:
+            logger.exception("Spot update loop error: %s", e)
+        for _ in range(SPOT_UPDATE_INTERVAL * 10):
+            if not _spot_running:
+                break
+            time.sleep(0.1)
+
+
+def _start_spot_thread():
+    global _spot_thread, _spot_running
+    if _spot_thread is None or not _spot_thread.is_alive():
+        _spot_running = True
+        _spot_thread = threading.Thread(target=_spot_update_loop, daemon=True)
+        _spot_thread.start()
+        logger.info("Spot price thread started")
 
 
 # ========== Фоновый поток обновления данных ==========
@@ -1141,10 +1265,27 @@ def api_orderbook():
     })
 
 
+@app.route("/api/spot")
+def api_spot():
+    """Спотовые цены и изменение с 23:45 МСК для всех поддерживаемых активов."""
+    _start_spot_thread()
+    with _spot_cache_lock:
+        result = {}
+        for yf_ticker, data in _spot_cache.items():
+            result[yf_ticker] = {
+                "current_price": data.get("current_price"),
+                "ref_price_2345": data.get("ref_price_2345"),
+                "change_pct": data.get("change_pct"),
+                "updated_at": data.get("updated_at"),
+            }
+    return jsonify({"spot": result, "map": SPOT_TICKER_MAP})
+
+
 def main():
     port = int(os.environ.get("PORT", "5000"))
     sandbox = "sandbox" if os.environ.get("SANDBOX", "1").strip() in ("1", "true", "yes") else "prod"
     logger.info("Starting server port=%s mode=%s", port, sandbox)
+    _start_spot_thread()
     app.run(host="0.0.0.0", port=port, debug=False)
 
 
