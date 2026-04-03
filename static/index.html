@@ -856,7 +856,8 @@
         }
 
         // Спотовое изменение с 23:45 МСК
-        const instrTicker = instrObj ? (instrObj.ticker || '') : '';
+        // Тикер берём из имени инструмента (формат "BTC-4.26 Биткоин" → "BTC-4.26")
+        const instrTicker = name.split(' ')[0] || '';
         const spotChg = getSpotChangePct(instrTicker);
         let spotPct = '—';
         let spotClass = 'pct-null';
