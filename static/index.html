@@ -797,9 +797,9 @@
         if (row.imbalance != null && row.imbalance !== 0) {
           imbalance = String(row.imbalance);
           if (row.imbalance_direction === 'bid') {
-            imbalanceClass = 'pct-positive';  // Покупатели преобладают — зелёный
+            imbalanceClass = 'pct-negative';  // Покупатели преобладают — красный
           } else if (row.imbalance_direction === 'ask') {
-            imbalanceClass = 'pct-negative';  // Продавцы преобладают — красный
+            imbalanceClass = 'pct-positive';  // Продавцы преобладают — зелёный
           }
         } else if (row.imbalance === 0) {
           imbalance = '0';
