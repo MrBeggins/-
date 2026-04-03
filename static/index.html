@@ -83,6 +83,9 @@
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: rgba(255,255,255,0.03); }
     .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .ref-price-input { background: transparent; border: none; border-bottom: 1px dashed var(--muted); color: var(--fg); font: inherit; font-variant-numeric: tabular-nums; text-align: right; width: 90px; outline: none; padding: 0; }
+    .ref-price-input:focus { border-bottom-color: var(--accent); }
+    .ref-price-input::placeholder { color: var(--muted); }
     .pct-positive { color: var(--accent); }
     .pct-negative { color: var(--negative); }
     .pct-null { color: var(--muted); }
@@ -227,6 +230,7 @@
           <th data-sort="name">Актив <span class="sort-icon"></span></th>
           <th class="num" data-sort="close">Цена 5м <span class="sort-icon"></span></th>
           <th class="num" data-sort="daily_close">Цена д <span class="sort-icon"></span></th>
+          <th class="num">Цена реф.</th>
           <th class="num" data-sort="auction">Цена аукц. <span class="sort-icon"></span></th>
           <th class="num" data-sort="deviation">Откл. % <span class="sort-icon"></span></th>
           <th class="num" data-sort="lots">Лоты <span class="sort-icon"></span></th>
@@ -234,7 +238,7 @@
         </tr>
       </thead>
       <tbody id="tableBody">
-        <tr><td colspan="7">Загрузка…</td></tr>
+        <tr><td colspan="8">Загрузка…</td></tr>
       </tbody>
     </table>
   </div>
@@ -759,10 +763,26 @@
     function renderTable(rows) {
       const tbody = document.getElementById('tableBody');
       if (!rows || rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7">Выберите инструменты в настройках или данных пока нет.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8">Выберите инструменты в настройках или данных пока нет.</td></tr>';
         return;
       }
       const sorted = sortRows(rows);
+      // Вешаем обработчик после рендера через делегирование
+      tbody.oninput = null;
+      tbody.onchange = null;
+      tbody.addEventListener('change', function refPriceHandler(e) {
+        if (!e.target.classList.contains('ref-price-input')) return;
+        const id = e.target.dataset.id;
+        const key = 'refPrice_' + CURRENT_PROFILE + '_' + id;
+        const val = e.target.value.trim();
+        if (val === '' || isNaN(parseFloat(val))) {
+          localStorage.removeItem(key);
+        } else {
+          localStorage.setItem(key, String(parseFloat(val)));
+        }
+        renderTable(currentRows);
+      }, { once: true });
+
       tbody.innerHTML = sorted.map(row => {
         const name = row.name || row.instrument_id;
         const instrObj = allFutures.find(f => f.instrument_uid === row.instrument_id || f.figi === row.instrument_id);
@@ -778,11 +798,21 @@
 
         // Цена аукциона
         const auctionPrice = row.auction_price != null ? formatPrice(row.auction_price, instrType) : '—';
-        
-        // Отклонение
+
+        // Референсная цена (из localStorage, задаётся вручную)
+        const refPriceKey = 'refPrice_' + CURRENT_PROFILE + '_' + row.instrument_id;
+        const refPriceStr = localStorage.getItem(refPriceKey);
+        const refPrice = refPriceStr ? parseFloat(refPriceStr) : null;
+
+        // Отклонение — от реф. цены если задана, иначе стандартное
         let devPct = '—';
         let devClass = 'pct-null';
-        const deviation = row.deviation_pct ?? row.change_pct;
+        let deviation = null;
+        if (refPrice && row.auction_price != null && refPrice !== 0) {
+          deviation = Math.round((row.auction_price - refPrice) / refPrice * 10000) / 100;
+        } else {
+          deviation = row.deviation_pct ?? row.change_pct;
+        }
         if (deviation != null) {
           devPct = deviation > 0 ? '+' + deviation : String(deviation);
           devClass = deviation > 0 ? 'pct-positive' : deviation < 0 ? 'pct-negative' : 'pct-null';
@@ -810,6 +840,7 @@
           '<td>' + escapeHtml(name) + '</td>' +
           '<td class="num">' + closePrice + '</td>' +
           '<td class="num">' + dailyClose + '</td>' +
+          '<td class="num"><input type="number" class="ref-price-input" data-id="' + row.instrument_id + '" value="' + (refPrice != null ? refPrice : '') + '" placeholder="—" step="any"></td>' +
           '<td class="num">' + auctionPrice + '</td>' +
           '<td class="num ' + devClass + '">' + devPct + (deviation != null ? '%' : '') + '</td>' +
           '<td class="num">' + executedLots + '</td>' +
