@@ -26,7 +26,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # При 4 сек интервале: 15 обновлений/мин × N инструментов ≤ 600 → N ≈ 40
 # С небольшим запасом используем 40 инструментов
 MAX_CACHED_INSTRUMENTS = 40
-BACKGROUND_INTERVAL_AUCTION = 4      # 4 секунды во время аукциона
+BACKGROUND_INTERVAL_AUCTION = 2      # 2 секунды во время аукциона
 BACKGROUND_INTERVAL_NORMAL = 3600    # 60 минут вне аукциона
 ACTIVE_INSTRUMENT_TTL = 300          # 5 минут - инструмент считается активным
 
