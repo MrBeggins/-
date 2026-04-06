@@ -435,8 +435,37 @@ def _get_api_url():
     return API_URL_SANDBOX if use_sandbox else API_URL_PROD
 
 
+def _load_tokens():
+    """Собрать все доступные токены: TINKOFF_INVEST_TOKEN, TINKOFF_INVEST_TOKEN_2, ..."""
+    tokens = []
+    primary = os.environ.get("TINKOFF_INVEST_TOKEN", "").strip()
+    if primary:
+        tokens.append(primary)
+    i = 2
+    while True:
+        t = os.environ.get(f"TINKOFF_INVEST_TOKEN_{i}", "").strip()
+        if not t:
+            break
+        tokens.append(t)
+        i += 1
+    return tokens
+
+_tokens = []
+_token_index = 0
+_token_lock = threading.Lock()
+
+def _get_next_token():
+    """Выдать следующий токен по кругу (round-robin)."""
+    global _token_index
+    with _token_lock:
+        if not _tokens:
+            return os.environ.get("TINKOFF_INVEST_TOKEN", "").strip()
+        token = _tokens[_token_index % len(_tokens)]
+        _token_index += 1
+        return token
+
 def _get_headers():
-    token = os.environ.get("TINKOFF_INVEST_TOKEN", "").strip()
+    token = _get_next_token()
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
@@ -1288,6 +1317,9 @@ def api_spot():
 
 
 def main():
+    global _tokens
+    _tokens = _load_tokens()
+    logger.info("Loaded %d API token(s)", len(_tokens))
     port = int(os.environ.get("PORT", "5000"))
     sandbox = "sandbox" if os.environ.get("SANDBOX", "1").strip() in ("1", "true", "yes") else "prod"
     logger.info("Starting server port=%s mode=%s", port, sandbox)
