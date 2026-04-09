@@ -91,7 +91,6 @@
     .pct-null { color: var(--muted); }
     .spread-glow-1 { background-color: rgba(0, 180, 80, 0.12); }
     .spread-glow-2 { background-color: rgba(0, 180, 80, 0.28); }
-    .spread-glow-3 { background-color: rgba(0, 180, 80, 0.55); }
     .settings-panel {
       background: var(--card);
       border: 1px solid var(--border);
@@ -873,9 +872,8 @@
         let rowClass = '';
         if (deviation != null && spotChg != null) {
           const diff = Math.abs(deviation - spotChg);
-          if (diff > 0.8)       rowClass = 'spread-glow-3';
-          else if (diff > 0.4)  rowClass = 'spread-glow-2';
-          else if (diff > 0.3)  rowClass = 'spread-glow-1';
+          if (diff > 0.8)       rowClass = 'spread-glow-2';
+          else if (diff > 0.5)  rowClass = 'spread-glow-1';
         }
 
         return (
