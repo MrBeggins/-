@@ -237,7 +237,7 @@
           <th class="num" data-sort="deviation">Откл. % <span class="sort-icon"></span></th>
           <th class="num" data-sort="lots">Лоты <span class="sort-icon"></span></th>
           <th class="num" data-sort="imbalance">Дисбаланс <span class="sort-icon"></span></th>
-          <th class="num">Спотовое изменение</th>
+          <th class="num">Цена сведения</th>
         </tr>
       </thead>
       <tbody id="tableBody">
@@ -277,26 +277,7 @@
     let sortColumn = 'name';
     let sortDirection = 'asc';
     let auctionInfo = null;
-    let spotData = {};  // {yf_ticker: {current_price, ref_price_2345, change_pct}}
 
-    // Маппинг префикса фьючерса → Yahoo Finance тикер
-    const SPOT_PREFIX_MAP = {
-      'GOLD': 'GC=F', 'GOLDM': 'GC=F',
-      'SILV': 'SI=F', 'SILVM': 'SI=F',
-      'BR':   'BZ=F', 'BRM':   'BZ=F',
-      'BTC':  'BTC-USD',
-      'ETH':  'ETH-USD',
-      'NASD': 'NQ=F',
-    };
-
-    function getSpotChangePct(futuresTicker) {
-      if (!futuresTicker) return null;
-      const prefix = futuresTicker.split('-')[0];
-      const yfTicker = SPOT_PREFIX_MAP[prefix];
-      if (!yfTicker) return null;
-      return spotData[yfTicker]?.change_pct ?? null;
-    }
-    
     // Показываем название профиля
     if (CURRENT_PROFILE !== 'default') {
       document.getElementById('profileBadge').textContent = '[' + CURRENT_PROFILE + ']';
@@ -792,17 +773,29 @@
       // Вешаем обработчик после рендера через делегирование
       tbody.oninput = null;
       tbody.onchange = null;
-      tbody.addEventListener('change', function refPriceHandler(e) {
-        if (!e.target.classList.contains('ref-price-input')) return;
-        const id = e.target.dataset.id;
-        const key = 'refPrice_' + CURRENT_PROFILE + '_' + id;
-        const val = e.target.value.trim();
-        if (val === '' || isNaN(parseFloat(val))) {
-          localStorage.removeItem(key);
-        } else {
-          localStorage.setItem(key, String(parseFloat(val)));
+      tbody.addEventListener('change', function inputHandler(e) {
+        if (e.target.classList.contains('ref-price-input')) {
+          const id = e.target.dataset.id;
+          const key = 'refPrice_' + CURRENT_PROFILE + '_' + id;
+          const val = e.target.value.trim();
+          if (val === '' || isNaN(parseFloat(val))) {
+            localStorage.removeItem(key);
+          } else {
+            localStorage.setItem(key, String(parseFloat(val)));
+          }
+          renderTable(currentRows);
         }
-        renderTable(currentRows);
+        if (e.target.classList.contains('vedeni-price-input')) {
+          const id = e.target.dataset.id;
+          const key = 'vedeniPrice_' + CURRENT_PROFILE + '_' + id;
+          const val = e.target.value.trim();
+          if (val === '' || isNaN(parseFloat(val))) {
+            localStorage.removeItem(key);
+          } else {
+            localStorage.setItem(key, String(parseFloat(val)));
+          }
+          renderTable(currentRows);
+        }
       }, { once: true });
 
       tbody.innerHTML = sorted.map(row => {
@@ -857,21 +850,15 @@
           imbalance = '0';
         }
 
-        // Спотовое изменение с 23:45 МСК
-        // Тикер берём из имени инструмента (формат "BTC-4.26 Биткоин" → "BTC-4.26")
-        const instrTicker = name.split(' ')[0] || '';
-        const spotChg = getSpotChangePct(instrTicker);
-        let spotPct = '—';
-        let spotClass = 'pct-null';
-        if (spotChg != null) {
-          spotPct = (spotChg > 0 ? '+' : '') + spotChg + '%';
-          spotClass = spotChg > 0 ? 'pct-positive' : spotChg < 0 ? 'pct-negative' : 'pct-null';
-        }
+        // Цена сведения (ручной ввод, хранится в localStorage)
+        const vedeniKey = 'vedeniPrice_' + CURRENT_PROFILE + '_' + row.instrument_id;
+        const vedeniStr = localStorage.getItem(vedeniKey);
+        const vedeniPrice = vedeniStr ? parseFloat(vedeniStr) : null;
 
-        // Подсветка строки по разнице Откл.% и Спотового изменения
+        // Подсветка строки по отклонению Цены сведения от Цены аукциона
         let rowClass = '';
-        if (deviation != null && spotChg != null) {
-          const diff = Math.abs(deviation - spotChg);
+        if (vedeniPrice != null && row.auction_price != null && row.auction_price !== 0) {
+          const diff = Math.abs((vedeniPrice - row.auction_price) / row.auction_price * 100);
           if (diff > 0.8)       rowClass = 'spread-glow-2';
           else if (diff > 0.5)  rowClass = 'spread-glow-1';
         }
@@ -886,7 +873,7 @@
           '<td class="num ' + devClass + '">' + devPct + (deviation != null ? '%' : '') + '</td>' +
           '<td class="num">' + executedLots + '</td>' +
           '<td class="num ' + imbalanceClass + '">' + imbalance + '</td>' +
-          '<td class="num ' + spotClass + '">' + spotPct + '</td>' +
+          '<td class="num"><input type="number" class="vedeni-price-input" data-id="' + row.instrument_id + '" value="' + (vedeniPrice != null ? vedeniPrice : '') + '" placeholder="—" step="any"></td>' +
           '</tr>'
         );
       }).join('');
@@ -928,15 +915,6 @@
         currentRows.forEach(row => {
           row.name = namesMap[row.instrument_id] || row.instrument_id;
         });
-
-        // Подгружаем спотовые данные (не блокируем таблицу при ошибке)
-        try {
-          const sr = await fetch('/api/spot');
-          if (sr.ok) {
-            const sd = await sr.json();
-            spotData = sd.spot || {};
-          }
-        } catch (_) {}
 
         renderTable(currentRows);
         updateAuctionBadge();
