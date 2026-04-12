@@ -390,9 +390,12 @@ def _background_update_loop():
                 interval = BACKGROUND_INTERVAL_AUCTION if is_auction else BACKGROUND_INTERVAL_NORMAL
                 logger.debug("Next background update in %d seconds", interval)
                 
-                # Спим с проверкой флага остановки
+                # Спим с проверкой флага остановки и начала аукциона
                 for _ in range(int(interval * 10)):
                     if not _background_running:
+                        break
+                    if not is_auction and _is_auction_time().get("is_any_auction"):
+                        logger.info("Auction started, waking up background thread")
                         break
                     time.sleep(0.1)
             else:
@@ -1146,11 +1149,11 @@ def _fetch_orderbook(instrument_id, base_url, headers, depth=50):
         depth: глубина стакана (1, 10, 20, 30, 40, 50). По умолчанию 50 для точного расчёта.
     """
     # Проверяем серверный кэш (заполняется фоновым потоком)
+    # Во время аукциона не используем долгий серверный кэш — только 2с TTL ниже
     cached_orderbook = _get_cached_orderbook(instrument_id)
-    # Во время аукциона не используем кэш с пустой ценой — даём шанс получить свежий стакан
     if cached_orderbook is not None:
-        if _is_auction_time().get("is_any_auction") and cached_orderbook.get("auction_price") is None:
-            cached_orderbook = None
+        if _is_auction_time().get("is_any_auction"):
+            cached_orderbook = None  # во время аукциона всегда берём из 2с кэша или fresh
         else:
             return cached_orderbook, True
     
